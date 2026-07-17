@@ -273,7 +273,11 @@ public class GraphTokenService {
             Files.writeString(path, objectMapper.writeValueAsString(node));
             LOG.infof("Token Microsoft gravado em %s", path.toAbsolutePath());
         } catch (Exception e) {
-            LOG.warnf(e, "Não foi possível gravar token store em %s", tokenStorePath);
+            LOG.errorf(e,
+                    "Não foi possível gravar token store em %s. "
+                            + "O volume precisa ser gravável pelo UID 1001 "
+                            + "(compose: serviço relatorio-jira-init).",
+                    tokenStorePath);
         }
     }
 

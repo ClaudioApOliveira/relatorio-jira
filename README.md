@@ -25,10 +25,14 @@ Variáveis de ambiente:
 Uma vez por sessão / quando o token expirar:
 
 ```bash
-curl -X POST http://localhost:8080/api/microsoft/device-login
+curl -X POST http://192.168.2.144:8080/api/microsoft/device-login
 ```
 
-Siga o código no navegador. Token fica em `.microsoft-graph-token.json`.
+Enquanto o `curl` espera, veja o código em `docker logs -f relatorio-jira` e autorize em
+https://www.microsoft.com/link. Token persiste no volume `relatorio_jira_data`
+(UID 1001 — o serviço `relatorio-jira-init` ajusta a permissão).
+
+Confira: `curl http://192.168.2.144:8080/api/microsoft/auth-status` → `"hasSession": true`.
 
 ## Relatório + planilha
 

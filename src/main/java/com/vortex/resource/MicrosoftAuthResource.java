@@ -1,15 +1,14 @@
 package com.vortex.resource;
 
-import com.vortex.dto.ApiErrorBody;
 import com.vortex.dto.MicrosoftAuthStatus;
 import com.vortex.http.graph.GraphTokenService;
+import com.vortex.http.graph.dto.DeviceLoginResult;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
 
 @Path("/api/microsoft")
 @Produces(MediaType.APPLICATION_JSON)
@@ -21,30 +20,21 @@ public class MicrosoftAuthResource {
     /**
      * Inicia login OneDrive pessoal (device code).
      * Abra a URL, digite o código, autorize — o endpoint espera e grava o refresh token.
+     * <p>
+     * Retorno tipado para indexação Jackson no native.
      */
     @POST
     @Path("/device-login")
-    public Response deviceLogin() {
-        try {
-            return Response.ok(tokenService.loginWithDeviceCode()).build();
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(new ApiErrorBody(e.getMessage()))
-                    .build();
-        } catch (Exception e) {
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(new ApiErrorBody(
-                            e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()))
-                    .build();
-        }
+    public DeviceLoginResult deviceLogin() {
+        return tokenService.loginWithDeviceCode();
     }
 
     @GET
     @Path("/auth-status")
-    public Response status() {
-        return Response.ok(new MicrosoftAuthStatus(
+    public MicrosoftAuthStatus status() {
+        return new MicrosoftAuthStatus(
                 tokenService.isDelegated(),
                 tokenService.hasDelegatedSession()
-        )).build();
+        );
     }
 }

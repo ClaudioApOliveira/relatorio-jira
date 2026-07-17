@@ -1,6 +1,5 @@
 package com.vortex.resource;
 
-import com.vortex.dto.ApiErrorBody;
 import com.vortex.dto.TempoGastoRequest;
 import com.vortex.dto.TempoGastoResponse;
 import com.vortex.service.TempoGastoReportService;
@@ -10,7 +9,6 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
 
 @Path("/api/reports/tempo-gasto")
 @Produces(MediaType.APPLICATION_JSON)
@@ -24,21 +22,11 @@ public class TempoGastoResource {
      * Coleta worklogs do Jira e, com {@code excelOnline: true}, preenche a coluna I
      * da planilha no OneDrive (só onde Descrição estiver vazia).
      * Login Microsoft: {@code POST /api/microsoft/device-login}.
+     * <p>
+     * Retorno tipado (não {@code Response}) para o Quarkus indexar o DTO no native.
      */
     @POST
-    public Response generate(TempoGastoRequest request) {
-        try {
-            TempoGastoResponse report = reportService.generate(request);
-            return Response.ok(report).build();
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(new ApiErrorBody(e.getMessage()))
-                    .build();
-        } catch (Exception e) {
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(new ApiErrorBody(
-                            e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()))
-                    .build();
-        }
+    public TempoGastoResponse generate(TempoGastoRequest request) {
+        return reportService.generate(request);
     }
 }

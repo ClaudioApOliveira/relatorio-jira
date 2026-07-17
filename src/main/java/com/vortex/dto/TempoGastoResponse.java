@@ -1,10 +1,12 @@
 package com.vortex.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.vortex.model.WorklogRow;
 
 import java.util.List;
 import java.util.Map;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record TempoGastoResponse(
         String periodLabel,
         String periodStart,
