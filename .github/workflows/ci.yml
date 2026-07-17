@@ -126,8 +126,35 @@ jobs:
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          # Evita falha TLS intermitente com Cloudflare (ML-KEM / Go)
+          GODEBUG: tlsmlkem=0
         run: |
           set -euo pipefail
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          docker push "${DOCKER_IMAGE}:${GITHUB_SHA}"
-          docker push "${DOCKER_IMAGE}:latest"
+
+          push_with_retry() {
+            local ref="$1"
+            local attempt=1
+            local max=5
+            # 15 min por tentativa — layer do native pode ser grande / rede instável
+            local timeout_secs=900
+
+            until timeout --signal=TERM --kill-after=30 "$timeout_secs" docker push "$ref"; do
+              local rc=$?
+              if [ "$attempt" -ge "$max" ]; then
+                echo "Falha ao fazer push de ${ref} após ${max} tentativas (último exit=${rc})."
+                exit 1
+              fi
+              echo "Push interrompido/falhou (exit=${rc}). Retry ${attempt}/${max}..."
+              attempt=$((attempt + 1))
+              sleep $((attempt * 5))
+              echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+            done
+            echo "OK: ${ref}"
+          }
+
+          echo "Pushing ${DOCKER_IMAGE}:${GITHUB_SHA}"
+          push_with_retry "${DOCKER_IMAGE}:${GITHUB_SHA}"
+
+          echo "Pushing ${DOCKER_IMAGE}:latest"
+          push_with_retry "${DOCKER_IMAGE}:latest"
