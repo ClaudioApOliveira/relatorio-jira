@@ -33,6 +33,11 @@ public class TempoGastoResource {
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(new ErrorBody(e.getMessage()))
                     .build();
+        } catch (Exception e) {
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(new ErrorBody(
+                            e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()))
+                    .build();
         }
     }
 

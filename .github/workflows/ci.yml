@@ -10,18 +10,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-and-native-build:
-    name: Testes e build nativo
+  # Rede do Kali → GHCR está instável (0 B/s / broken pipe).
+  # Build nativo no self-hosted; push da imagem no GitHub-hosted.
+  native-build:
+    name: Build nativo (self-hosted)
     runs-on: self-hosted
-    permissions:
-      contents: read
-      packages: write
 
     env:
       MAVEN_OPTS: -Xmx1536m
       QUARKUS_PROFILE: prod
-      # GitHub Packages (GHCR) — somente tag latest
-      DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/relatorio-jira
       JIRA_BASE_URL: https://example.atlassian.net
       JIRA_API_EMAIL: ci@example.com
       JIRA_API_TOKEN: ci-build-placeholder
@@ -39,18 +36,17 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
 
-      - name: Preparar e testar
+      - name: Testes
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./mvnw
           ./mvnw test -DskipITs --batch-mode
 
-      - name: Verificar dependências do build nativo (Ubuntu)
+      - name: Verificar zlib1g-dev
         shell: bash
         run: |
           set -euo pipefail
-
           if dpkg -s zlib1g-dev >/dev/null 2>&1; then
             echo "zlib1g-dev já instalado."
           elif [ "$(id -u)" -eq 0 ]; then
@@ -60,8 +56,7 @@ jobs:
             sudo apt-get update
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zlib1g-dev
           else
-            echo "Erro: zlib1g-dev não está instalado e o runner não tem sudo sem senha."
-            echo "  sudo apt-get update && sudo apt-get install -y zlib1g-dev"
+            echo "Instale no runner: sudo apt-get install -y zlib1g-dev"
             exit 1
           fi
 
@@ -81,7 +76,7 @@ jobs:
           NATIVE_GB=$((NATIVE_MB / 1024))
 
           if [ "$NATIVE_GB" -lt 6 ]; then
-            echo "Erro: memória insuficiente para build nativo (disponível: ${USABLE_MB}MB, mínimo: ~7GB)."
+            echo "Erro: memória insuficiente (disponível: ${USABLE_MB}MB)."
             free -h
             exit 1
           fi
@@ -100,7 +95,7 @@ jobs:
           NATIVE_ARGS="${NATIVE_ARGS},-O3"
           NATIVE_ARGS="${NATIVE_ARGS},-march=x86-64-v3"
 
-          echo "Memória: ${USABLE_MB}MB → native-image ${NATIVE_GB}g, ${BUILD_THREADS} threads"
+          echo "native-image ${NATIVE_GB}g, ${BUILD_THREADS} threads"
           free -h
 
           ./mvnw package -Dnative -DskipTests --batch-mode \
@@ -113,44 +108,53 @@ jobs:
           chmod +x "$BINARY"
           ls -lh "$BINARY"
 
-      - name: Build imagem Docker
-        shell: bash
+      - name: Upload binário nativo
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-runner
+          path: target/relatorio-jira-1.0.0-SNAPSHOT-runner
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-push:
+    name: Imagem GHCR (ubuntu-latest)
+    needs: native-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/relatorio-jira
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download binário nativo
+        uses: actions/download-artifact@v4
+        with:
+          name: native-runner
+          path: target
+
+      - name: Preparar binário
         run: |
           set -euo pipefail
-          # GHCR exige nome em minúsculas
+          chmod +x target/relatorio-jira-1.0.0-SNAPSHOT-runner
+          ls -lh target/relatorio-jira-1.0.0-SNAPSHOT-runner
+
+      - name: Login GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build e push (somente latest)
+        run: |
+          set -euo pipefail
           IMAGE="$(echo "${DOCKER_IMAGE}" | tr '[:upper:]' '[:lower:]')"
-          echo "Build: ${IMAGE}:latest"
+          echo "Build/push ${IMAGE}:latest"
           docker build \
             -f src/main/docker/Dockerfile.native-micro \
             -t "${IMAGE}:latest" \
             .
-          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
-
-      - name: Push GitHub Packages (GHCR)
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-          push_with_retry() {
-            local ref="$1"
-            local attempt=1
-            local max=5
-            local timeout_secs=1800
-
-            until timeout --signal=TERM --kill-after=30 "$timeout_secs" docker push "$ref"; do
-              local rc=$?
-              if [ "$attempt" -ge "$max" ]; then
-                echo "Falha ao fazer push de ${ref} após ${max} tentativas (exit=${rc})."
-                exit 1
-              fi
-              echo "Push falhou (exit=${rc}, ex.: broken pipe). Retry ${attempt}/${max}..."
-              attempt=$((attempt + 1))
-              sleep $((attempt * 10))
-              echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-            done
-            echo "OK: ${ref}"
-          }
-
-          echo "Pushing ${IMAGE}:latest"
-          push_with_retry "${IMAGE}:latest"
+          docker push "${IMAGE}:latest"
+          echo "OK: ${IMAGE}:latest"
