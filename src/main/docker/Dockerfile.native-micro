@@ -29,4 +29,8 @@ COPY --chown=1001:root --chmod=0755 target/*-runner /work/application
 EXPOSE 8080
 USER 1001
 
-ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]
+# preferIPv4 no binário native (JAVA_TOOL_OPTIONS não se aplica ao GraalVM)
+ENTRYPOINT ["./application", \
+    "-Dquarkus.http.host=0.0.0.0", \
+    "-Djava.net.preferIPv4Stack=true", \
+    "-Djava.net.preferIPv4Addresses=true"]

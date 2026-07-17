@@ -1,5 +1,7 @@
 package com.vortex.resource;
 
+import com.vortex.dto.ApiErrorBody;
+import com.vortex.dto.MicrosoftAuthStatus;
 import com.vortex.http.graph.GraphTokenService;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
@@ -24,11 +26,15 @@ public class MicrosoftAuthResource {
     @Path("/device-login")
     public Response deviceLogin() {
         try {
-            var result = tokenService.loginWithDeviceCode();
-            return Response.ok(result).build();
+            return Response.ok(tokenService.loginWithDeviceCode()).build();
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(new ErrorBody(e.getMessage()))
+                    .entity(new ApiErrorBody(e.getMessage()))
+                    .build();
+        } catch (Exception e) {
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(new ApiErrorBody(
+                            e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()))
                     .build();
         }
     }
@@ -36,15 +42,9 @@ public class MicrosoftAuthResource {
     @GET
     @Path("/auth-status")
     public Response status() {
-        return Response.ok(new AuthStatus(
+        return Response.ok(new MicrosoftAuthStatus(
                 tokenService.isDelegated(),
                 tokenService.hasDelegatedSession()
         )).build();
-    }
-
-    public record AuthStatus(boolean delegatedMode, boolean hasSession) {
-    }
-
-    public record ErrorBody(String message) {
     }
 }

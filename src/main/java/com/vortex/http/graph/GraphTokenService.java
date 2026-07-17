@@ -2,6 +2,7 @@ package com.vortex.http.graph;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vortex.http.graph.dto.DeviceCodeResponse;
+import com.vortex.http.graph.dto.DeviceLoginResult;
 import com.vortex.http.graph.dto.GraphTokenResponse;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -157,15 +158,6 @@ public class GraphTokenService {
         throw new IllegalStateException("Tempo esgotado aguardando autorização no device login");
     }
 
-    public record DeviceLoginResult(
-            boolean success,
-            String instructions,
-            String userCode,
-            String verificationUri,
-            String status
-    ) {
-    }
-
     private String delegatedAccessToken() {
         Instant now = Instant.now();
         if (cachedAccessToken != null && now.isBefore(expiresAt)) {
@@ -271,8 +263,15 @@ public class GraphTokenService {
         }
         try {
             Path path = Path.of(tokenStorePath);
-            TokenStore store = new TokenStore(cachedRefreshToken, Instant.now().toString());
-            Files.writeString(path, objectMapper.writeValueAsString(store));
+            if (path.getParent() != null) {
+                Files.createDirectories(path.getParent());
+            }
+            // Evita DTO custom no ObjectMapper (native): serializa só String/árvore.
+            var node = objectMapper.createObjectNode();
+            node.put("refreshToken", cachedRefreshToken);
+            node.put("savedAt", Instant.now().toString());
+            Files.writeString(path, objectMapper.writeValueAsString(node));
+            LOG.infof("Token Microsoft gravado em %s", path.toAbsolutePath());
         } catch (Exception e) {
             LOG.warnf(e, "Não foi possível gravar token store em %s", tokenStorePath);
         }
@@ -287,9 +286,9 @@ public class GraphTokenService {
             if (!Files.isRegularFile(path)) {
                 return;
             }
-            TokenStore store = objectMapper.readValue(Files.readString(path), TokenStore.class);
-            if (store != null && store.refreshToken() != null) {
-                cachedRefreshToken = store.refreshToken();
+            var node = objectMapper.readTree(Files.readString(path));
+            if (node != null && node.hasNonNull("refreshToken")) {
+                cachedRefreshToken = node.get("refreshToken").asText();
             }
         } catch (Exception e) {
             LOG.warnf(e, "Não foi possível ler token store %s", tokenStorePath);
@@ -344,8 +343,5 @@ public class GraphTokenService {
     private static String require(Optional<String> value, String name) {
         return value.filter(s -> !s.isBlank())
                 .orElseThrow(() -> new IllegalArgumentException("Config obrigatória ausente: " + name));
-    }
-
-    public record TokenStore(String refreshToken, String savedAt) {
     }
 }

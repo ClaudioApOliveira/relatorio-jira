@@ -59,22 +59,29 @@ Regras da coluna I:
 - senão → 1ª atividade manhã; demais tarde
 - ignora linhas com Total `0:00` (fim de semana)
 
-## Docker Compose
+## Docker Compose (n8n + relatorio-jira)
+
+### Portainer
+1. Stacks → Add stack → cole o `docker-compose.yml`
+2. Em **Environment variables** do stack, adicione:
+
+| Name | Value |
+|------|--------|
+| `JIRA_BASE_URL` | `https://perprojetos.atlassian.net` |
+| `JIRA_API_EMAIL` | seu e-mail |
+| `JIRA_API_TOKEN` | token Atlassian |
+| `MICROSOFT_CLIENT_ID` | Client ID do app Azure |
+
+3. Se a imagem GHCR for privada: Registries → add GHCR com token GitHub (`read:packages`)
+4. Deploy the stack
+
+Chamada **dentro do n8n**: `http://relatorio-jira:8080/api/reports/tempo-gasto`
+
+### CLI (sem Portainer)
 
 ```bash
 cp .env.example .env
-# edite .env com Jira + MICROSOFT_CLIENT_ID
-
-docker compose pull
 docker compose up -d
-```
-
-API em `http://localhost:8080`. Token Graph fica em `./data/`.
-
-Login Microsoft (uma vez):
-
-```bash
-curl -X POST http://localhost:8080/api/microsoft/device-login
 ```
 
 ## Native
@@ -94,8 +101,11 @@ No macOS (AWT/POI) use container-build:
 
 ## CI
 
-Push em `main` dispara build nativo no runner **self-hosted** e push para
-GitHub Packages:
+Dois jobs:
+1. **self-hosted** — testes + build nativo (GraalVM)
+2. **ubuntu-latest** — monta a imagem e faz push no GHCR (evita upload lento/travado do Kali)
+
+Imagem:
 
 ```text
 ghcr.io/claudioapoliveira/relatorio-jira:latest

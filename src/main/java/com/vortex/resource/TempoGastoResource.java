@@ -1,5 +1,6 @@
 package com.vortex.resource;
 
+import com.vortex.dto.ApiErrorBody;
 import com.vortex.dto.TempoGastoRequest;
 import com.vortex.dto.TempoGastoResponse;
 import com.vortex.service.TempoGastoReportService;
@@ -31,16 +32,13 @@ public class TempoGastoResource {
             return Response.ok(report).build();
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(new ErrorBody(e.getMessage()))
+                    .entity(new ApiErrorBody(e.getMessage()))
                     .build();
         } catch (Exception e) {
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(new ErrorBody(
+                    .entity(new ApiErrorBody(
                             e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()))
                     .build();
         }
-    }
-
-    public record ErrorBody(String message) {
     }
 }
