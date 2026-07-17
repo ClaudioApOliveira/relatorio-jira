@@ -61,6 +61,15 @@ public class WorklogCollectorServiceImpl implements WorklogCollectorService {
             SearchRequest request = new SearchRequest(jql, SEARCH_PAGE_SIZE, fields, nextPageToken);
             SearchResponse page = jiraApi.search(request);
             List<Issue> issues = page.issues() != null ? page.issues() : List.of();
+            if (nextPageToken == null && issues.isEmpty()) {
+                LOG.warnf(
+                        "Busca Jira retornou 0 issues (isLast=%s, nextPageToken=%s). "
+                                + "Confira JIRA_BASE_URL/credenciais no Portainer e DNS do container "
+                                + "(não use extra_hosts com IP antigo do Atlassian).",
+                        page.isLast(),
+                        page.nextPageToken() != null ? "(presente)" : "(null)"
+                );
+            }
 
             for (Issue issue : issues) {
                 if (issue.key() == null || issue.key().isBlank()) {
