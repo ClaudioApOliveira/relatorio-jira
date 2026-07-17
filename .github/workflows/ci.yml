@@ -13,12 +13,15 @@ jobs:
   test-and-native-build:
     name: Testes e build nativo
     runs-on: self-hosted
-    environment: DOCKERHUB
+    permissions:
+      contents: read
+      packages: write
 
     env:
       MAVEN_OPTS: -Xmx1536m
       QUARKUS_PROFILE: prod
-      DOCKER_IMAGE: oliveiraclaudio/relatorio-jira
+      # GitHub Packages (GHCR) — somente tag latest
+      DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/relatorio-jira
       JIRA_BASE_URL: https://example.atlassian.net
       JIRA_API_EMAIL: ci@example.com
       JIRA_API_TOKEN: ci-build-placeholder
@@ -114,47 +117,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Tags: ${DOCKER_IMAGE}:${GITHUB_SHA} e ${DOCKER_IMAGE}:latest"
+          # GHCR exige nome em minúsculas
+          IMAGE="$(echo "${DOCKER_IMAGE}" | tr '[:upper:]' '[:lower:]')"
+          echo "Build: ${IMAGE}:latest"
           docker build \
             -f src/main/docker/Dockerfile.native-micro \
-            -t "${DOCKER_IMAGE}:${GITHUB_SHA}" \
-            -t "${DOCKER_IMAGE}:latest" \
+            -t "${IMAGE}:latest" \
             .
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
-      - name: Push imagem Docker Hub
+      - name: Push GitHub Packages (GHCR)
         shell: bash
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          # Evita falha TLS intermitente com Cloudflare (ML-KEM / Go)
-          GODEBUG: tlsmlkem=0
         run: |
           set -euo pipefail
-          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-          push_with_retry() {
-            local ref="$1"
-            local attempt=1
-            local max=5
-            # 15 min por tentativa — layer do native pode ser grande / rede instável
-            local timeout_secs=900
-
-            until timeout --signal=TERM --kill-after=30 "$timeout_secs" docker push "$ref"; do
-              local rc=$?
-              if [ "$attempt" -ge "$max" ]; then
-                echo "Falha ao fazer push de ${ref} após ${max} tentativas (último exit=${rc})."
-                exit 1
-              fi
-              echo "Push interrompido/falhou (exit=${rc}). Retry ${attempt}/${max}..."
-              attempt=$((attempt + 1))
-              sleep $((attempt * 5))
-              echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-            done
-            echo "OK: ${ref}"
-          }
-
-          echo "Pushing ${DOCKER_IMAGE}:${GITHUB_SHA}"
-          push_with_retry "${DOCKER_IMAGE}:${GITHUB_SHA}"
-
-          echo "Pushing ${DOCKER_IMAGE}:latest"
-          push_with_retry "${DOCKER_IMAGE}:latest"
+          echo "Pushing ${IMAGE}:latest"
+          docker push "${IMAGE}:latest"
+          echo "OK: ${IMAGE}:latest"

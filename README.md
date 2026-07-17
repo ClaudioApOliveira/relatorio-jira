@@ -83,7 +83,7 @@ No Linux (CI self-hosted / servidor):
 
 ```bash
 ./mvnw package -Dnative -Dquarkus.native.container-build=false
-docker build -f src/main/docker/Dockerfile.native-micro -t oliveiraclaudio/relatorio-jira .
+docker build -f src/main/docker/Dockerfile.native-micro -t ghcr.io/claudioapoliveira/relatorio-jira:latest .
 ```
 
 No macOS (AWT/POI) use container-build:
@@ -95,9 +95,17 @@ No macOS (AWT/POI) use container-build:
 ## CI
 
 Push em `main` dispara build nativo no runner **self-hosted** e push para
-`oliveiraclaudio/relatorio-jira` (tags `:latest` e `:${{ github.sha }}`).
+GitHub Packages:
 
-Secrets no environment `DOCKERHUB`:
+```text
+ghcr.io/claudioapoliveira/relatorio-jira:latest
+```
 
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
+Após o primeiro push, deixe o pacote **público**:
+GitHub → Packages → `relatorio-jira` → Package settings → Change visibility → Public.
+
+Pull:
+
+```bash
+docker pull ghcr.io/claudioapoliveira/relatorio-jira:latest
+```
