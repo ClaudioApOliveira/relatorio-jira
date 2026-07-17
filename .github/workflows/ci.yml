@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-native-build:
+    name: Testes e build nativo
+    runs-on: self-hosted
+    environment: DOCKERHUB
+
+    env:
+      MAVEN_OPTS: -Xmx1536m
+      QUARKUS_PROFILE: prod
+      DOCKER_IMAGE: oliveiraclaudio/relatorio-jira
+      # Placeholders só para o build (valores reais vêm em runtime no container)
+      JIRA_BASE_URL: https://example.atlassian.net
+      JIRA_API_EMAIL: ci@example.com
+      JIRA_API_TOKEN: ci-build-placeholder
+      MICROSOFT_CLIENT_ID: ci-build-placeholder
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar GraalVM 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+
+      - name: Preparar e testar
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./mvnw
+          ./mvnw test -DskipITs --batch-mode
+
+      - name: Verificar dependências do build nativo (Ubuntu)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if dpkg -s zlib1g-dev >/dev/null 2>&1; then
+            echo "zlib1g-dev já instalado."
+          elif [ "$(id -u)" -eq 0 ]; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zlib1g-dev
+          elif sudo -n true 2>/dev/null; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zlib1g-dev
+          else
+            echo "Erro: zlib1g-dev não está instalado e o runner não tem sudo sem senha."
+            echo "Instale uma vez no servidor Ubuntu do runner:"
+            echo "  sudo apt-get update && sudo apt-get install -y zlib1g-dev"
+            exit 1
+          fi
+
+      - name: Build nativo
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MEM_AVAILABLE_MB=$(awk '/MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
+          SWAP_FREE_MB=$(free -m | awk '/^Swap:/ {print ($2 > 0) ? $4 : 0}')
+          CPU_COUNT=$(nproc)
+
+          USABLE_MB=$((MEM_AVAILABLE_MB + SWAP_FREE_MB))
+          MAVEN_MB=512
+          OS_BUFFER_MB=1024
+          NATIVE_MB=$((USABLE_MB - MAVEN_MB - OS_BUFFER_MB))
+          NATIVE_GB=$((NATIVE_MB / 1024))
+
+          if [ "$NATIVE_GB" -lt 6 ]; then
+            echo "Erro: memória insuficiente para build nativo (disponível: ${USABLE_MB}MB, mínimo: ~7GB)."
+            free -h
+            exit 1
+          fi
+
+          if [ "$CPU_COUNT" -gt 8 ]; then
+            BUILD_THREADS=8
+          else
+            BUILD_THREADS=$CPU_COUNT
+          fi
+
+          export MAVEN_OPTS="-Xmx${MAVEN_MB}m"
+          export QUARKUS_NATIVE_NATIVE_IMAGE_XMX="${NATIVE_GB}g"
+
+          # Argumentos do GraalVM native-image:
+          #   -J-Xmx / -H:NumberOfThreads  -> recursos de build (ajustados ao runner)
+          #   -O3                          -> nível máximo de otimização do binário
+          #   -march=x86-64-v3             -> instruções modernas (AVX2); binário portável em CPUs 2015+
+          NATIVE_ARGS="-J-Xmx${NATIVE_GB}g"
+          NATIVE_ARGS="${NATIVE_ARGS},-H:NumberOfThreads=${BUILD_THREADS}"
+          NATIVE_ARGS="${NATIVE_ARGS},-O3"
+          NATIVE_ARGS="${NATIVE_ARGS},-march=x86-64-v3"
+
+          echo "Memória: ${USABLE_MB}MB utilizável → native-image ${NATIVE_GB}g, ${BUILD_THREADS} threads"
+          echo "GraalVM args: ${NATIVE_ARGS}"
+          free -h
+
+          ./mvnw package -Dnative -DskipTests --batch-mode \
+            -Dquarkus.native.container-build=false \
+            -Dquarkus.native.native-image-xmx="${NATIVE_GB}g" \
+            -Dquarkus.native.additional-build-args="${NATIVE_ARGS}"
+
+          BINARY="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
+          test -f "$BINARY"
+          chmod +x "$BINARY"
+          ls -lh "$BINARY"
+
+      - name: Build imagem Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            -f src/main/docker/Dockerfile.native-micro \
+            -t "${DOCKER_IMAGE}:${GITHUB_SHA}" \
+            -t "${DOCKER_IMAGE}:latest" \
+            .
+
+      - name: Scan da imagem (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+      - name: Push imagem Docker Hub
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          docker push "${DOCKER_IMAGE}:${GITHUB_SHA}"
+          docker push "${DOCKER_IMAGE}:latest"
