@@ -16,23 +16,14 @@ jobs:
     environment: DOCKERHUB
 
     env:
-      MAVEN_OPTS: >-
-        -Xmx1536m
-        -Djdk.tls.client.protocols=TLSv1.2
+      MAVEN_OPTS: -Xmx1536m -Djdk.tls.client.protocols=TLSv1.2 -Dhttps.protocols=TLSv1.2
       QUARKUS_PROFILE: prod
+      # Imagem no Docker Hub (obrigatório: oliveiraclaudio/relatorio-jira:<tag>)
       DOCKER_IMAGE: oliveiraclaudio/relatorio-jira
-      # Placeholders só para o build (valores reais vêm em runtime no container)
       JIRA_BASE_URL: https://example.atlassian.net
       JIRA_API_EMAIL: ci@example.com
       JIRA_API_TOKEN: ci-build-placeholder
       MICROSOFT_CLIENT_ID: ci-build-placeholder
-      # Retries Maven (TLS/rede instável no runner)
-      MAVEN_ARGS: >-
-        --batch-mode
-        -Daether.connector.basic.threads=1
-        -Daether.connector.http.retryHandler.count=5
-        -Daether.connector.http.retryHandler.interval=3000
-        -Dmaven.wagon.http.retryHandler.count=5
 
     steps:
       - name: Checkout
@@ -46,30 +37,28 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
 
-      - name: Checar acesso ao Maven Central
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
-            -o /dev/null \
-            -w "Maven Central HTTP %{http_code}\n" \
-            https://repo.maven.apache.org/maven2/
-
       - name: Preparar e testar
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./mvnw
 
-          # bad_record_mac / falhas TLS transitórias → retry
+          MVN=(./mvnw --batch-mode
+            -s .mvn/ci-settings.xml
+            -Dmaven.resolver.transport=wagon
+            -Daether.connector.basic.threads=1
+            -Daether.connector.http.retryHandler.count=5
+            -Dmaven.wagon.http.retryHandler.count=5
+            -Dmaven.wagon.http.pool=false)
+
           attempt=1
           max=5
-          until ./mvnw test -DskipITs ${MAVEN_ARGS}; do
+          until "${MVN[@]}" test -DskipITs; do
             if [ "$attempt" -ge "$max" ]; then
               echo "Maven test falhou após ${max} tentativas."
               exit 1
             fi
-            echo "Tentativa ${attempt}/${max} falhou (possível TLS). Aguardando e repetindo..."
+            echo "Tentativa ${attempt}/${max} falhou. Retry..."
             attempt=$((attempt + 1))
             sleep $((attempt * 5))
           done
@@ -89,7 +78,6 @@ jobs:
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zlib1g-dev
           else
             echo "Erro: zlib1g-dev não está instalado e o runner não tem sudo sem senha."
-            echo "Instale uma vez no servidor Ubuntu do runner:"
             echo "  sudo apt-get update && sudo apt-get install -y zlib1g-dev"
             exit 1
           fi
@@ -121,25 +109,28 @@ jobs:
             BUILD_THREADS=$CPU_COUNT
           fi
 
-          export MAVEN_OPTS="-Xmx${MAVEN_MB}m"
+          export MAVEN_OPTS="-Xmx${MAVEN_MB}m -Djdk.tls.client.protocols=TLSv1.2 -Dhttps.protocols=TLSv1.2"
           export QUARKUS_NATIVE_NATIVE_IMAGE_XMX="${NATIVE_GB}g"
 
-          # Argumentos do GraalVM native-image:
-          #   -J-Xmx / -H:NumberOfThreads  -> recursos de build (ajustados ao runner)
-          #   -O3                          -> nível máximo de otimização do binário
-          #   -march=x86-64-v3             -> instruções modernas (AVX2); binário portável em CPUs 2015+
           NATIVE_ARGS="-J-Xmx${NATIVE_GB}g"
           NATIVE_ARGS="${NATIVE_ARGS},-H:NumberOfThreads=${BUILD_THREADS}"
           NATIVE_ARGS="${NATIVE_ARGS},-O3"
           NATIVE_ARGS="${NATIVE_ARGS},-march=x86-64-v3"
 
-          echo "Memória: ${USABLE_MB}MB utilizável → native-image ${NATIVE_GB}g, ${BUILD_THREADS} threads"
-          echo "GraalVM args: ${NATIVE_ARGS}"
+          echo "Memória: ${USABLE_MB}MB → native-image ${NATIVE_GB}g, ${BUILD_THREADS} threads"
           free -h
+
+          MVN=(./mvnw --batch-mode
+            -s .mvn/ci-settings.xml
+            -Dmaven.resolver.transport=wagon
+            -Daether.connector.basic.threads=1
+            -Daether.connector.http.retryHandler.count=5
+            -Dmaven.wagon.http.retryHandler.count=5
+            -Dmaven.wagon.http.pool=false)
 
           attempt=1
           max=5
-          until ./mvnw package -Dnative -DskipTests ${MAVEN_ARGS} \
+          until "${MVN[@]}" package -Dnative -DskipTests \
             -Dquarkus.native.container-build=false \
             -Dquarkus.native.native-image-xmx="${NATIVE_GB}g" \
             -Dquarkus.native.additional-build-args="${NATIVE_ARGS}"; do
@@ -147,7 +138,7 @@ jobs:
               echo "Maven native package falhou após ${max} tentativas."
               exit 1
             fi
-            echo "Tentativa ${attempt}/${max} falhou (possível TLS). Aguardando e repetindo..."
+            echo "Tentativa ${attempt}/${max} falhou. Retry..."
             attempt=$((attempt + 1))
             sleep $((attempt * 5))
           done
@@ -161,11 +152,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          IMAGE="${DOCKER_IMAGE}"
+          TAG_SHA="${GITHUB_SHA}"
+          TAG_LATEST="latest"
+
+          echo "Build tags:"
+          echo "  ${IMAGE}:${TAG_SHA}"
+          echo "  ${IMAGE}:${TAG_LATEST}"
+
           docker build \
             -f src/main/docker/Dockerfile.native-micro \
-            -t "${DOCKER_IMAGE}:${GITHUB_SHA}" \
-            -t "${DOCKER_IMAGE}:latest" \
+            -t "${IMAGE}:${TAG_SHA}" \
+            -t "${IMAGE}:${TAG_LATEST}" \
             .
+
+          docker image ls "${IMAGE}"
 
       - name: Push imagem Docker Hub
         shell: bash
@@ -174,6 +175,14 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
+          IMAGE="${DOCKER_IMAGE}"
+          TAG_SHA="${GITHUB_SHA}"
+          TAG_LATEST="latest"
+
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          docker push "${DOCKER_IMAGE}:${GITHUB_SHA}"
-          docker push "${DOCKER_IMAGE}:latest"
+
+          echo "Pushing ${IMAGE}:${TAG_SHA}"
+          docker push "${IMAGE}:${TAG_SHA}"
+
+          echo "Pushing ${IMAGE}:${TAG_LATEST}"
+          docker push "${IMAGE}:${TAG_LATEST}"
