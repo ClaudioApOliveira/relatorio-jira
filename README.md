@@ -9,7 +9,7 @@ Variáveis de ambiente:
 
 | Variável | Uso |
 |----------|-----|
-| `JIRA_BASE_URL` | Ex.: `https://perprojetos.atlassian.net` |
+| `JIRA_BASE_URL` | Ex.: `https://projetos.atlassian.net` |
 | `JIRA_API_EMAIL` | E-mail da conta Jira |
 | `JIRA_API_TOKEN` | API token Atlassian |
 | `MICROSOFT_CLIENT_ID` | App Registration (contas pessoais) |
