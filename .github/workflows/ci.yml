@@ -16,9 +16,8 @@ jobs:
     environment: DOCKERHUB
 
     env:
-      MAVEN_OPTS: -Xmx1536m -Djdk.tls.client.protocols=TLSv1.2 -Dhttps.protocols=TLSv1.2
+      MAVEN_OPTS: -Xmx1536m
       QUARKUS_PROFILE: prod
-      # Imagem no Docker Hub (obrigatório: oliveiraclaudio/relatorio-jira:<tag>)
       DOCKER_IMAGE: oliveiraclaudio/relatorio-jira
       JIRA_BASE_URL: https://example.atlassian.net
       JIRA_API_EMAIL: ci@example.com
@@ -42,26 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./mvnw
-
-          MVN=(./mvnw --batch-mode
-            -s .mvn/ci-settings.xml
-            -Dmaven.resolver.transport=wagon
-            -Daether.connector.basic.threads=1
-            -Daether.connector.http.retryHandler.count=5
-            -Dmaven.wagon.http.retryHandler.count=5
-            -Dmaven.wagon.http.pool=false)
-
-          attempt=1
-          max=5
-          until "${MVN[@]}" test -DskipITs; do
-            if [ "$attempt" -ge "$max" ]; then
-              echo "Maven test falhou após ${max} tentativas."
-              exit 1
-            fi
-            echo "Tentativa ${attempt}/${max} falhou. Retry..."
-            attempt=$((attempt + 1))
-            sleep $((attempt * 5))
-          done
+          ./mvnw test -DskipITs --batch-mode
 
       - name: Verificar dependências do build nativo (Ubuntu)
         shell: bash
@@ -109,7 +89,7 @@ jobs:
             BUILD_THREADS=$CPU_COUNT
           fi
 
-          export MAVEN_OPTS="-Xmx${MAVEN_MB}m -Djdk.tls.client.protocols=TLSv1.2 -Dhttps.protocols=TLSv1.2"
+          export MAVEN_OPTS="-Xmx${MAVEN_MB}m"
           export QUARKUS_NATIVE_NATIVE_IMAGE_XMX="${NATIVE_GB}g"
 
           NATIVE_ARGS="-J-Xmx${NATIVE_GB}g"
@@ -120,28 +100,10 @@ jobs:
           echo "Memória: ${USABLE_MB}MB → native-image ${NATIVE_GB}g, ${BUILD_THREADS} threads"
           free -h
 
-          MVN=(./mvnw --batch-mode
-            -s .mvn/ci-settings.xml
-            -Dmaven.resolver.transport=wagon
-            -Daether.connector.basic.threads=1
-            -Daether.connector.http.retryHandler.count=5
-            -Dmaven.wagon.http.retryHandler.count=5
-            -Dmaven.wagon.http.pool=false)
-
-          attempt=1
-          max=5
-          until "${MVN[@]}" package -Dnative -DskipTests \
+          ./mvnw package -Dnative -DskipTests --batch-mode \
             -Dquarkus.native.container-build=false \
             -Dquarkus.native.native-image-xmx="${NATIVE_GB}g" \
-            -Dquarkus.native.additional-build-args="${NATIVE_ARGS}"; do
-            if [ "$attempt" -ge "$max" ]; then
-              echo "Maven native package falhou após ${max} tentativas."
-              exit 1
-            fi
-            echo "Tentativa ${attempt}/${max} falhou. Retry..."
-            attempt=$((attempt + 1))
-            sleep $((attempt * 5))
-          done
+            -Dquarkus.native.additional-build-args="${NATIVE_ARGS}"
 
           BINARY="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
           test -f "$BINARY"
@@ -152,21 +114,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="${DOCKER_IMAGE}"
-          TAG_SHA="${GITHUB_SHA}"
-          TAG_LATEST="latest"
-
-          echo "Build tags:"
-          echo "  ${IMAGE}:${TAG_SHA}"
-          echo "  ${IMAGE}:${TAG_LATEST}"
-
+          echo "Tags: ${DOCKER_IMAGE}:${GITHUB_SHA} e ${DOCKER_IMAGE}:latest"
           docker build \
             -f src/main/docker/Dockerfile.native-micro \
-            -t "${IMAGE}:${TAG_SHA}" \
-            -t "${IMAGE}:${TAG_LATEST}" \
+            -t "${DOCKER_IMAGE}:${GITHUB_SHA}" \
+            -t "${DOCKER_IMAGE}:latest" \
             .
-
-          docker image ls "${IMAGE}"
 
       - name: Push imagem Docker Hub
         shell: bash
@@ -175,14 +128,6 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
-          IMAGE="${DOCKER_IMAGE}"
-          TAG_SHA="${GITHUB_SHA}"
-          TAG_LATEST="latest"
-
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-
-          echo "Pushing ${IMAGE}:${TAG_SHA}"
-          docker push "${IMAGE}:${TAG_SHA}"
-
-          echo "Pushing ${IMAGE}:${TAG_LATEST}"
-          docker push "${IMAGE}:${TAG_LATEST}"
+          docker push "${DOCKER_IMAGE}:${GITHUB_SHA}"
+          docker push "${DOCKER_IMAGE}:latest"
