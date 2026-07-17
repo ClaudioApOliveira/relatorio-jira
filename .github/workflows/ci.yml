@@ -132,6 +132,25 @@ jobs:
           set -euo pipefail
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+          push_with_retry() {
+            local ref="$1"
+            local attempt=1
+            local max=5
+            local timeout_secs=1800
+
+            until timeout --signal=TERM --kill-after=30 "$timeout_secs" docker push "$ref"; do
+              local rc=$?
+              if [ "$attempt" -ge "$max" ]; then
+                echo "Falha ao fazer push de ${ref} após ${max} tentativas (exit=${rc})."
+                exit 1
+              fi
+              echo "Push falhou (exit=${rc}, ex.: broken pipe). Retry ${attempt}/${max}..."
+              attempt=$((attempt + 1))
+              sleep $((attempt * 10))
+              echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            done
+            echo "OK: ${ref}"
+          }
+
           echo "Pushing ${IMAGE}:latest"
-          docker push "${IMAGE}:latest"
-          echo "OK: ${IMAGE}:latest"
+          push_with_retry "${IMAGE}:latest"
