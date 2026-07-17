@@ -59,6 +59,24 @@ Regras da coluna I:
 - senão → 1ª atividade manhã; demais tarde
 - ignora linhas com Total `0:00` (fim de semana)
 
+## Docker Compose
+
+```bash
+cp .env.example .env
+# edite .env com Jira + MICROSOFT_CLIENT_ID
+
+docker compose pull
+docker compose up -d
+```
+
+API em `http://localhost:8080`. Token Graph fica em `./data/`.
+
+Login Microsoft (uma vez):
+
+```bash
+curl -X POST http://localhost:8080/api/microsoft/device-login
+```
+
 ## Native
 
 No Linux (CI self-hosted / servidor):

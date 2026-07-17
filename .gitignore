@@ -27,6 +27,7 @@ buildNumber.properties
 .env.*
 !.env.example
 .microsoft-graph-token.json
+data/
 *.pem
 *.p12
 *.jks

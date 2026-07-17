@@ -16,7 +16,9 @@ jobs:
     environment: DOCKERHUB
 
     env:
-      MAVEN_OPTS: -Xmx1536m
+      MAVEN_OPTS: >-
+        -Xmx1536m
+        -Djdk.tls.client.protocols=TLSv1.2
       QUARKUS_PROFILE: prod
       DOCKER_IMAGE: oliveiraclaudio/relatorio-jira
       # Placeholders só para o build (valores reais vêm em runtime no container)
@@ -24,6 +26,13 @@ jobs:
       JIRA_API_EMAIL: ci@example.com
       JIRA_API_TOKEN: ci-build-placeholder
       MICROSOFT_CLIENT_ID: ci-build-placeholder
+      # Retries Maven (TLS/rede instável no runner)
+      MAVEN_ARGS: >-
+        --batch-mode
+        -Daether.connector.basic.threads=1
+        -Daether.connector.http.retryHandler.count=5
+        -Daether.connector.http.retryHandler.interval=3000
+        -Dmaven.wagon.http.retryHandler.count=5
 
     steps:
       - name: Checkout
@@ -37,12 +46,33 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
 
+      - name: Checar acesso ao Maven Central
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+            -o /dev/null \
+            -w "Maven Central HTTP %{http_code}\n" \
+            https://repo.maven.apache.org/maven2/
+
       - name: Preparar e testar
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./mvnw
-          ./mvnw test -DskipITs --batch-mode
+
+          # bad_record_mac / falhas TLS transitórias → retry
+          attempt=1
+          max=5
+          until ./mvnw test -DskipITs ${MAVEN_ARGS}; do
+            if [ "$attempt" -ge "$max" ]; then
+              echo "Maven test falhou após ${max} tentativas."
+              exit 1
+            fi
+            echo "Tentativa ${attempt}/${max} falhou (possível TLS). Aguardando e repetindo..."
+            attempt=$((attempt + 1))
+            sleep $((attempt * 5))
+          done
 
       - name: Verificar dependências do build nativo (Ubuntu)
         shell: bash
@@ -107,10 +137,20 @@ jobs:
           echo "GraalVM args: ${NATIVE_ARGS}"
           free -h
 
-          ./mvnw package -Dnative -DskipTests --batch-mode \
+          attempt=1
+          max=5
+          until ./mvnw package -Dnative -DskipTests ${MAVEN_ARGS} \
             -Dquarkus.native.container-build=false \
             -Dquarkus.native.native-image-xmx="${NATIVE_GB}g" \
-            -Dquarkus.native.additional-build-args="${NATIVE_ARGS}"
+            -Dquarkus.native.additional-build-args="${NATIVE_ARGS}"; do
+            if [ "$attempt" -ge "$max" ]; then
+              echo "Maven native package falhou após ${max} tentativas."
+              exit 1
+            fi
+            echo "Tentativa ${attempt}/${max} falhou (possível TLS). Aguardando e repetindo..."
+            attempt=$((attempt + 1))
+            sleep $((attempt * 5))
+          done
 
           BINARY="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
           test -f "$BINARY"
