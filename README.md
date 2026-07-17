@@ -94,7 +94,7 @@ No macOS (AWT/POI) use container-build:
 
 ## CI
 
-Push em `main` dispara build nativo no runner **self-hosted**, scan Trivy e push para
+Push em `main` dispara build nativo no runner **self-hosted** e push para
 `oliveiraclaudio/relatorio-jira` (tags `:latest` e `:${{ github.sha }}`).
 
 Secrets no environment `DOCKERHUB`:
