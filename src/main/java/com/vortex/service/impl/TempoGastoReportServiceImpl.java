@@ -51,10 +51,7 @@ public class TempoGastoReportServiceImpl implements TempoGastoReportService {
                 months, projectKeys, author, request.limitIssues());
 
         Map<Integer, String> excelUpdated = Map.of();
-        boolean online = Boolean.TRUE.equals(request.excelOnline());
-        String excelPath = blankToNull(request.excelPath());
-
-        if (online) {
+        if (Boolean.TRUE.equals(request.excelOnline())) {
             excelUpdated = planilhaSync.sincronizarOnline(
                     blankToNull(request.excelDriveId()),
                     blankToNull(request.excelItemId()),
@@ -63,8 +60,6 @@ public class TempoGastoReportServiceImpl implements TempoGastoReportService {
                     blankToNull(request.excelOneDrivePath()),
                     rows
             );
-        } else if (excelPath != null) {
-            excelUpdated = planilhaSync.sincronizar(excelPath, rows);
         }
 
         LocalDate start = MonthPeriod.startOf(months);

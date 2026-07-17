@@ -2,7 +2,7 @@ package com.vortex.model.excel;
 
 /**
  * Índices das colunas da planilha de atividades (cabeçalho na linha 3).
- * Excel 1-based row 3 → POI index 2.
+ * Excel 1-based: linha 4 dos dados → índice 3 nas APIs Graph (0-based no usedRange).
  */
 public final class PlanilhaAtividadeColumns {
 

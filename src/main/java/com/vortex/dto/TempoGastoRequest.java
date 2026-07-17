@@ -26,8 +26,6 @@ public record TempoGastoRequest(
         List<String> projectKeys,
         String author,
         Integer limitIssues,
-        /** Caminho local .xlsx (alternativa a excelOnline). */
-        String excelPath,
         Boolean excelOnline,
         String excelDriveId,
         String excelItemId,

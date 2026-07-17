@@ -49,11 +49,6 @@
             <artifactId>quarkus-rest-client-jackson</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.quarkiverse.poi</groupId>
-            <artifactId>quarkus-poi</artifactId>
-            <version>2.2.1</version>
-        </dependency>
-        <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>
             <scope>test</scope>
@@ -129,10 +124,7 @@
                 <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
                 <skipITs>false</skipITs>
                 <quarkus.native.enabled>true</quarkus.native.enabled>
-                <!--
-                  No macOS: -Dquarkus.native.container-build=true (AWT/POI).
-                  No CI Linux self-hosted: GraalVM no host (sem container-build).
-                -->
+                <!-- No CI Linux self-hosted: GraalVM no host (sem container-build). -->
             </properties>
         </profile>
     </profiles>

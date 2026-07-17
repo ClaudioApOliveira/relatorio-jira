@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Rede do Kali → GHCR está instável (0 B/s / broken pipe).
-  # Build nativo no self-hosted; push da imagem no GitHub-hosted.
+  # Rede do Kali → GHCR/artifacts é instável.
+  # Build nativo no self-hosted; comprime + retries no upload; push no GitHub-hosted.
   native-build:
     name: Build nativo (self-hosted)
     runs-on: self-hosted
@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configurar GraalVM 25
         uses: graalvm/setup-graalvm@v1
@@ -43,20 +43,25 @@ jobs:
           chmod +x ./mvnw
           ./mvnw test -DskipITs --batch-mode
 
-      - name: Verificar zlib1g-dev
+      - name: Verificar zlib1g-dev e zstd
         shell: bash
         run: |
           set -euo pipefail
-          if dpkg -s zlib1g-dev >/dev/null 2>&1; then
-            echo "zlib1g-dev já instalado."
-          elif [ "$(id -u)" -eq 0 ]; then
+          need_pkgs=()
+          dpkg -s zlib1g-dev >/dev/null 2>&1 || need_pkgs+=(zlib1g-dev)
+          command -v zstd >/dev/null 2>&1 || need_pkgs+=(zstd)
+          if [ "${#need_pkgs[@]}" -eq 0 ]; then
+            echo "Dependências OK."
+            exit 0
+          fi
+          if [ "$(id -u)" -eq 0 ]; then
             apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zlib1g-dev
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need_pkgs[@]}"
           elif sudo -n true 2>/dev/null; then
             sudo apt-get update
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zlib1g-dev
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need_pkgs[@]}"
           else
-            echo "Instale no runner: sudo apt-get install -y zlib1g-dev"
+            echo "Instale no runner: sudo apt-get install -y zlib1g-dev zstd"
             exit 1
           fi
 
@@ -81,8 +86,9 @@ jobs:
             exit 1
           fi
 
-          if [ "$CPU_COUNT" -gt 8 ]; then
-            BUILD_THREADS=8
+          # Poucas threads = mais heap livre por fase (evita falso deadlock do watchdog)
+          if [ "$CPU_COUNT" -gt 4 ]; then
+            BUILD_THREADS=4
           else
             BUILD_THREADS=$CPU_COUNT
           fi
@@ -92,7 +98,7 @@ jobs:
 
           NATIVE_ARGS="-J-Xmx${NATIVE_GB}g"
           NATIVE_ARGS="${NATIVE_ARGS},-H:NumberOfThreads=${BUILD_THREADS}"
-          NATIVE_ARGS="${NATIVE_ARGS},-O3"
+          NATIVE_ARGS="${NATIVE_ARGS},-H:DeadlockWatchdogInterval=60"
           NATIVE_ARGS="${NATIVE_ARGS},-march=x86-64-v3"
 
           echo "native-image ${NATIVE_GB}g, ${BUILD_THREADS} threads"
@@ -108,13 +114,50 @@ jobs:
           chmod +x "$BINARY"
           ls -lh "$BINARY"
 
-      - name: Upload binário nativo
-        uses: actions/upload-artifact@v4
+      - name: Comprimir binário (zstd)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINARY="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
+          zstd -T0 -19 -f "$BINARY" -o "${BINARY}.zst"
+          ls -lh "$BINARY" "${BINARY}.zst"
+          # Remove o binário cru para não subir acidentalmente no artifact
+          rm -f "$BINARY"
+
+      # Rede do Kali trava uploads grandes; tenta até 3x o pacote menor (.zst)
+      - name: Upload binário (tentativa 1)
+        id: upload1
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
         with:
           name: native-runner
-          path: target/relatorio-jira-1.0.0-SNAPSHOT-runner
+          path: target/relatorio-jira-1.0.0-SNAPSHOT-runner.zst
           if-no-files-found: error
           retention-days: 1
+          compression-level: 0
+
+      - name: Upload binário (tentativa 2)
+        id: upload2
+        if: steps.upload1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-runner
+          path: target/relatorio-jira-1.0.0-SNAPSHOT-runner.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload binário (tentativa 3)
+        id: upload3
+        if: steps.upload1.outcome == 'failure' && steps.upload2.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-runner
+          path: target/relatorio-jira-1.0.0-SNAPSHOT-runner.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   docker-push:
     name: Imagem GHCR (ubuntu-latest)
@@ -129,19 +172,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download binário nativo
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: native-runner
           path: target
 
-      - name: Preparar binário
+      - name: Descomprimir binário
         run: |
           set -euo pipefail
-          chmod +x target/relatorio-jira-1.0.0-SNAPSHOT-runner
-          ls -lh target/relatorio-jira-1.0.0-SNAPSHOT-runner
+          ZST="target/relatorio-jira-1.0.0-SNAPSHOT-runner.zst"
+          OUT="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
+          test -f "$ZST"
+          zstd -d -f "$ZST" -o "$OUT"
+          chmod +x "$OUT"
+          rm -f "$ZST"
+          ls -lh "$OUT"
 
       - name: Login GHCR
         run: |

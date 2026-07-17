@@ -14,21 +14,7 @@ import java.util.Map;
 public class PlanilhaDescricaoSyncService {
 
     @Inject
-    ExcelService excelService;
-
-    @Inject
     ExcelOnlineService excelOnlineService;
-
-    /** Planilha local (.xlsx no disco). */
-    public Map<Integer, String> sincronizar(String caminhoExcel, List<WorklogRow> worklogs) {
-        if (caminhoExcel == null || caminhoExcel.isBlank()) {
-            throw new IllegalArgumentException("caminhoExcel obrigatório");
-        }
-        List<PlanilhaAtividadeRow> linhas = excelService.lerLinhas(caminhoExcel);
-        Map<Integer, String> updates = PlanilhaDescricaoMapper.buildUpdates(worklogs, linhas);
-        excelService.atualizarDescricoes(caminhoExcel, updates);
-        return updates;
-    }
 
     /** Planilha no Excel Online (OneDrive via Microsoft Graph). */
     public Map<Integer, String> sincronizarOnline(

@@ -50,7 +50,7 @@ curl -X POST http://localhost:8080/api/reports/tempo-gasto \
 Alternativas:
 
 - `excelFileName`: busca o nome exato sob `VERTEXCODE LTDA` (subpastas)
-- `excelPath`: planilha local `.xlsx` (sem OneDrive)
+- `excelDriveId` + `excelItemId`: IDs Graph já conhecidos
 
 Regras da coluna I:
 
@@ -91,12 +91,6 @@ No Linux (CI self-hosted / servidor):
 ```bash
 ./mvnw package -Dnative -Dquarkus.native.container-build=false
 docker build -f src/main/docker/Dockerfile.native-micro -t ghcr.io/claudioapoliveira/relatorio-jira:latest .
-```
-
-No macOS (AWT/POI) use container-build:
-
-```bash
-./mvnw package -Dnative -Dquarkus.native.container-build=true
 ```
 
 ## CI
