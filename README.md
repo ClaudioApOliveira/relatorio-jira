@@ -86,18 +86,15 @@ docker compose up -d
 
 ## Native
 
-No Linux (CI self-hosted / servidor):
-
 ```bash
-./mvnw package -Dnative -Dquarkus.native.container-build=false
+./mvnw package -Dnative -Dquarkus.native.container-build=true
 docker build -f src/main/docker/Dockerfile.native-micro -t ghcr.io/claudioapoliveira/relatorio-jira:latest .
 ```
 
 ## CI
 
-Dois jobs:
-1. **self-hosted** — testes + build nativo (GraalVM)
-2. **ubuntu-latest** — monta a imagem e faz push no GHCR (evita upload lento/travado do Kali)
+Um job no **ubuntu-latest**: testes + build nativo (`container-build`) + push no GHCR.
+Evita self-hosted (Kali) por DNS/upload instáveis.
 
 Imagem:
 

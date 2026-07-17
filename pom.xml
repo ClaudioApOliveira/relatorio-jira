@@ -124,7 +124,7 @@
                 <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
                 <skipITs>false</skipITs>
                 <quarkus.native.enabled>true</quarkus.native.enabled>
-                <!-- No CI Linux self-hosted: GraalVM no host (sem container-build). -->
+                <!-- Preferir container-build no CI (ubuntu-latest). -->
             </properties>
         </profile>
     </profiles>

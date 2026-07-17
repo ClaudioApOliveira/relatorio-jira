@@ -10,186 +10,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Rede do Kali → GHCR/artifacts é instável.
-  # Build nativo no self-hosted; comprime + retries no upload; push no GitHub-hosted.
-  native-build:
-    name: Build nativo (self-hosted)
-    runs-on: self-hosted
-
-    env:
-      MAVEN_OPTS: -Xmx1536m
-      QUARKUS_PROFILE: prod
-      JIRA_BASE_URL: https://example.atlassian.net
-      JIRA_API_EMAIL: ci@example.com
-      JIRA_API_TOKEN: ci-build-placeholder
-      MICROSOFT_CLIENT_ID: ci-build-placeholder
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Configurar GraalVM 25
-        uses: graalvm/setup-graalvm@v1
-        with:
-          java-version: '25'
-          distribution: graalvm-community
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache: maven
-
-      - name: Testes
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x ./mvnw
-          ./mvnw test -DskipITs --batch-mode
-
-      - name: Verificar zlib1g-dev e zstd
-        shell: bash
-        run: |
-          set -euo pipefail
-          need_pkgs=()
-          dpkg -s zlib1g-dev >/dev/null 2>&1 || need_pkgs+=(zlib1g-dev)
-          command -v zstd >/dev/null 2>&1 || need_pkgs+=(zstd)
-          if [ "${#need_pkgs[@]}" -eq 0 ]; then
-            echo "Dependências OK."
-            exit 0
-          fi
-          if [ "$(id -u)" -eq 0 ]; then
-            apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need_pkgs[@]}"
-          elif sudo -n true 2>/dev/null; then
-            sudo apt-get update
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need_pkgs[@]}"
-          else
-            echo "Instale no runner: sudo apt-get install -y zlib1g-dev zstd"
-            exit 1
-          fi
-
-      - name: Build nativo
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          MEM_AVAILABLE_MB=$(awk '/MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
-          SWAP_FREE_MB=$(free -m | awk '/^Swap:/ {print ($2 > 0) ? $4 : 0}')
-          CPU_COUNT=$(nproc)
-
-          USABLE_MB=$((MEM_AVAILABLE_MB + SWAP_FREE_MB))
-          MAVEN_MB=512
-          OS_BUFFER_MB=1024
-          NATIVE_MB=$((USABLE_MB - MAVEN_MB - OS_BUFFER_MB))
-          NATIVE_GB=$((NATIVE_MB / 1024))
-
-          if [ "$NATIVE_GB" -lt 6 ]; then
-            echo "Erro: memória insuficiente (disponível: ${USABLE_MB}MB)."
-            free -h
-            exit 1
-          fi
-
-          # Poucas threads = mais heap livre por fase (evita falso deadlock do watchdog)
-          if [ "$CPU_COUNT" -gt 4 ]; then
-            BUILD_THREADS=4
-          else
-            BUILD_THREADS=$CPU_COUNT
-          fi
-
-          export MAVEN_OPTS="-Xmx${MAVEN_MB}m"
-          export QUARKUS_NATIVE_NATIVE_IMAGE_XMX="${NATIVE_GB}g"
-
-          NATIVE_ARGS="-J-Xmx${NATIVE_GB}g"
-          NATIVE_ARGS="${NATIVE_ARGS},-H:NumberOfThreads=${BUILD_THREADS}"
-          NATIVE_ARGS="${NATIVE_ARGS},-H:DeadlockWatchdogInterval=60"
-          NATIVE_ARGS="${NATIVE_ARGS},-march=x86-64-v3"
-
-          echo "native-image ${NATIVE_GB}g, ${BUILD_THREADS} threads"
-          free -h
-
-          ./mvnw package -Dnative -DskipTests --batch-mode \
-            -Dquarkus.native.container-build=false \
-            -Dquarkus.native.native-image-xmx="${NATIVE_GB}g" \
-            -Dquarkus.native.additional-build-args="${NATIVE_ARGS}"
-
-          BINARY="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
-          test -f "$BINARY"
-          chmod +x "$BINARY"
-          ls -lh "$BINARY"
-
-      - name: Comprimir binário (zstd)
-        shell: bash
-        run: |
-          set -euo pipefail
-          BINARY="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
-          zstd -T0 -19 -f "$BINARY" -o "${BINARY}.zst"
-          ls -lh "$BINARY" "${BINARY}.zst"
-          # Remove o binário cru para não subir acidentalmente no artifact
-          rm -f "$BINARY"
-
-      # Rede do Kali trava uploads grandes; tenta até 3x o pacote menor (.zst)
-      - name: Upload binário (tentativa 1)
-        id: upload1
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: native-runner
-          path: target/relatorio-jira-1.0.0-SNAPSHOT-runner.zst
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
-      - name: Upload binário (tentativa 2)
-        id: upload2
-        if: steps.upload1.outcome == 'failure'
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: native-runner
-          path: target/relatorio-jira-1.0.0-SNAPSHOT-runner.zst
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
-      - name: Upload binário (tentativa 3)
-        id: upload3
-        if: steps.upload1.outcome == 'failure' && steps.upload2.outcome == 'failure'
-        uses: actions/upload-artifact@v7
-        with:
-          name: native-runner
-          path: target/relatorio-jira-1.0.0-SNAPSHOT-runner.zst
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
-  docker-push:
-    name: Imagem GHCR (ubuntu-latest)
-    needs: native-build
+  # Tudo no ubuntu-latest: evita rede instável do Kali (artifact/GHCR).
+  # Sem POI o native cabe no runner GitHub-hosted (container-build).
+  build-and-push:
+    name: Native + GHCR
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
     env:
+      MAVEN_OPTS: -Xmx2g
+      QUARKUS_PROFILE: prod
+      JIRA_BASE_URL: https://example.atlassian.net
+      JIRA_API_EMAIL: ci@example.com
+      JIRA_API_TOKEN: ci-build-placeholder
+      MICROSOFT_CLIENT_ID: ci-build-placeholder
       DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/relatorio-jira
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Download binário nativo
-        uses: actions/download-artifact@v7
+      - name: Setup Java 25
+        uses: actions/setup-java@v5
         with:
-          name: native-runner
-          path: target
+          distribution: temurin
+          java-version: '25'
+          cache: maven
 
-      - name: Descomprimir binário
+      - name: Testes
         run: |
           set -euo pipefail
-          ZST="target/relatorio-jira-1.0.0-SNAPSHOT-runner.zst"
-          OUT="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
-          test -f "$ZST"
-          zstd -d -f "$ZST" -o "$OUT"
-          chmod +x "$OUT"
-          rm -f "$ZST"
-          ls -lh "$OUT"
+          chmod +x ./mvnw
+          ./mvnw test -DskipITs --batch-mode
+
+      - name: Build nativo (container-build)
+        run: |
+          set -euo pipefail
+          free -h
+          NATIVE_ARGS="-H:NumberOfThreads=2,-H:DeadlockWatchdogInterval=60,-march=x86-64-v3"
+          ./mvnw package -Dnative -DskipTests --batch-mode \
+            -Dquarkus.native.container-build=true \
+            -Dquarkus.native.native-image-xmx=6g \
+            -Dquarkus.native.additional-build-args="${NATIVE_ARGS}"
+          BINARY="target/relatorio-jira-1.0.0-SNAPSHOT-runner"
+          test -f "$BINARY"
+          chmod +x "$BINARY"
+          ls -lh "$BINARY"
 
       - name: Login GHCR
         run: |
